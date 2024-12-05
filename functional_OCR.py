@@ -1,119 +1,108 @@
 import pytesseract
-from PIL import Image
+import cv2
+import PIL
+import re
+import json
 
-# Define functions for each task
-def referral_code(data):
-    """Extract referral code from OCR data."""
-    text = data['text']
-    for line in text.split('\n'):
-        if "Referral Code" in line:
-            return line.split(':')[-1].strip()
-    return "Referral code not found."
+# Define configuration for pytesseract
+my_config = r"--psm 6 --oem 3"
 
-def booking_completion(data):
-    """Extract booking completion status from OCR data."""
-    text = data['text']
-    if "Booking Complete" in text:
-        return "Booking is complete."
-    return "Booking is not complete."
+# Function to extract referral code
+def extract_referral_code(image_path):
+    text = pytesseract.image_to_string(PIL.Image.open(image_path), config=my_config)
+    match = re.search(r"Amber_\d+", text)
+    if match:
+        return {"Referral Code": match.group()}
+    return {"Referral Code": "Not found"}
 
-def booking_id(data):
-    """Extract booking ID from OCR data."""
-    text = data['text']
-    for line in text.split('\n'):
-        if "Booking ID" in line:
-            return line.split(':')[-1].strip()
-    return "Booking ID not found."
+# Function to extract accepted date and student name
+def extract_student_info(image_path):
+    text = pytesseract.image_to_string(PIL.Image.open(image_path), config=my_config)
+    data = {}
 
-def email_proof(data):
-    """Extract email information from OCR data."""
-    text = data['text']
-    for line in text.split('\n'):
-        if "@" in line and ".com" in line:
-            return line.strip()
-    return "Email proof not found."
+    date_match = re.search(r"Accepted on:\s*(\d{2}/\d{2}/\d{4})", text)
+    if date_match:
+        data["Accepted Date"] = date_match.group(1)
 
-def tenancy_details(data):
-    """Extract tenancy details from OCR data."""
-    text = data['text']
-    for line in text.split('\n'):
-        if "Tenancy" in line:
-            return line.strip()
-    return "Tenancy details not found."
+    name_match = re.search(r"Name of student:\s*(.*)", text)
+    if name_match:
+        data["Student Name"] = name_match.group(1).strip()
 
-def booking_and_tenancy(data):
-    """Extract both booking and tenancy details."""
-    booking = booking_id(data)
-    tenancy = tenancy_details(data)
-    return {
-        "Booking": booking,
-        "Tenancy": tenancy
-    }
+    return data if data else {"Accepted Date": "Not found", "Student Name": "Not found"}
 
-def new_task(data):
-    """Placeholder for a new task."""
-    return "New task processing not implemented yet."
+# Function to extract accommodation details
+def extract_accommodation_details(image_path):
+    image = cv2.imread(image_path)
+    gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    _, threshold_image = cv2.threshold(gray_image, 150, 255, cv2.THRESH_BINARY)
+    denoised_image = cv2.fastNlMeansDenoising(threshold_image, None, 30, 7, 21)
+    data = pytesseract.image_to_string(denoised_image, config=my_config)
 
-# Mapping of task names to functions
-task_functions = {
-    "referral_code": referral_code,
-    "booking_completion": booking_completion,
-    "booking_id": booking_id,
-    "email_proof": email_proof,
-    "tenancy_details": tenancy_details,
-    "booking_and_tenancy": booking_and_tenancy,
-    "new_task": new_task
-}
+    extracted_data = {}
 
-def process_image(task_name, image_path):
-    """Process an image using the specified task."""
-    if task_name not in task_functions:
-        raise ValueError(f"Task '{task_name}' is not recognized.")
+    contract_length_match = re.search(r"Contract\s*Length\s*(?:.*\s*)?(\d+\s*weeks)", data)
+    if contract_length_match:
+        extracted_data["Contract Length"] = contract_length_match.group(1).strip()
 
-    # Open the image and perform OCR
-    image = Image.open(image_path)
-    ocr_data = {
-        "text": pytesseract.image_to_string(image)
-    }
+    arriving_date_match = re.search(r"Arriving\s+Departing\s+(\d{1,2}\s\w+\s\d{4})\s+(\d{1,2}\s\w+\s\d{4})", data)
+    if arriving_date_match:
+        extracted_data["Arriving Date"] = arriving_date_match.group(1).strip()
 
-    # Call the appropriate function
-    return task_functions[task_name](ocr_data)
+    departing_date_match = re.search(r"23 September 2024\s+(\d{1,2}\s\w+\s\d{4})", data)
+    if departing_date_match:
+        extracted_data["Departing Date"] = departing_date_match.group(1).strip()
 
+    total_cost_match = re.search(r"Total cost of the accommodation\s+£([\d,\.]+)", data)
+    if total_cost_match:
+        extracted_data["Total Cost of Accommodation"] = total_cost_match.group(1).strip()
+
+    return extracted_data if extracted_data else {"Contract Length": "Not found", "Arriving Date": "Not found", "Departing Date": "Not found", "Total Cost of Accommodation": "Not found"}
+
+# Function to extract booking ID
+def extract_booking_id(image_path):
+    text = pytesseract.image_to_string(PIL.Image.open(image_path), config=my_config)
+    match = re.search(r"\$T\s*(\d+)", text)
+
+    if match:
+        return {"Booking ID": match.group(0).strip()}
+    return {"Booking ID": "Not found"}
+
+# Function to extract email and account password
+def extract_credentials(image_path):
+    text = pytesseract.image_to_string(PIL.Image.open(image_path), config=my_config)
+    email_pattern = r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"
+    password_pattern = r"Account Password:\s*(\S+)"
+
+    extracted_cred = {}
+
+    email_match = re.search(email_pattern, text)
+    if email_match:
+        extracted_cred["Username"] = email_match.group(0)
+
+    password_match = re.search(password_pattern, text)
+    if password_match:
+        extracted_cred["Account Password"] = password_match.group(1)
+
+    return extracted_cred if extracted_cred else {"Username": "Not found", "Account Password": "Not found"}
+
+# Main function to process images and save the extracted data into a JSON file
+def main():
+    extracted_info = {}
+
+    # Process each image and extract data
+    extracted_info.update(extract_referral_code("812115.png"))
+    extracted_info.update(extract_student_info("812101.png"))
+    extracted_info.update(extract_accommodation_details("812102.png"))
+    extracted_info.update(extract_booking_id("812103.png"))
+    extracted_info.update(extract_credentials("812117.png"))
+
+    # Save the extracted data as a JSON file
+    with open("2531747.json", "w") as json_file:
+        json.dump(extracted_info, json_file, indent=4)
+
+    # Print the extracted data to console
+    print(json.dumps(extracted_info, indent=4))
+
+# Run the main function
 if __name__ == "__main__":
-    # List of tasks with their respective image paths
-    tasks = [
-        {"task": "referral_code", "image": "referral_image.png"},
-        {"task": "booking_completion", "image": "booking_completion_image.png"},
-        {"task": "booking_id", "image": "814594.png"},
-        {"task": "email_proof", "image": "email_image.png"},
-        {"task": "tenancy_details", "image": "tenancy_image.png"},
-        {"task": "booking_and_tenancy", "image": "combined_image.png"},
-        {"task": "new_task", "image": "new_task_image.png"}
-    ]
-
-    # Process each task
-    results = {}
-    for task in tasks:
-        task_name = task["task"]
-        image_path = task["image"]
-        print(f"Processing task: {task_name} with image: {image_path}")
-        try:
-            result = process_image(task_name, image_path)
-            results[task_name] = result
-        except Exception as e:
-            results[task_name] = str(e)
-
-    # Print results
-    for task_name, result in results.items():
-        print(f"\nTask: {task_name}\nResult: {result}")
-
-
-
-
-
-
-
-
-
-
-https://drive.google.com/drive/folders/1MwsGPXa-9jRnBC6WDllZNXe4w3H1YLFu
+    main()
