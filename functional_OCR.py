@@ -106,3 +106,14 @@ if __name__ == "__main__":
     # Print results
     for task_name, result in results.items():
         print(f"\nTask: {task_name}\nResult: {result}")
+
+
+
+
+
+
+
+
+
+
+https://drive.google.com/drive/folders/1MwsGPXa-9jRnBC6WDllZNXe4w3H1YLFu
